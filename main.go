@@ -127,7 +127,7 @@ func main() {
 				var emailNoti models.EmailNoti
 				json.Unmarshal([]byte(msgBody), &emailNoti)
 
-				err = emailServer.SendSaimu(emailNoti)
+				err = emailServer.SendEmailLuckyShirt(emailNoti)
 				if err != nil {
 					logs.Error(fmt.Sprintf("send email error: %s", err))
 				} else {

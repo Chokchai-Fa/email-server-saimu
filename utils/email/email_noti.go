@@ -21,7 +21,7 @@ func NewEmailServer(serverEmail string, serverPassword string, smtpServer string
 	return EmailServer{serverEmail, smtpServer, smtpPort, serverEmail, serverPassword}, nil
 }
 
-func (h *EmailServer) SendSaimu(data models.EmailNoti) error {
+func (h *EmailServer) SendEmailLuckyShirt(data models.EmailNoti) error {
 	message := gomail.NewMessage()
 	message.SetHeader("From", h.From)
 	message.SetHeader("To", data.Email)
