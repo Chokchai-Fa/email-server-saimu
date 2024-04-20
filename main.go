@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"os"
@@ -17,6 +18,7 @@ import (
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/joho/godotenv"
 )
@@ -112,39 +114,63 @@ func main() {
 		if err != nil {
 			panic("unable to receive message from queue" + err.Error())
 		} else {
-			// Print out received messages
+			var wg sync.WaitGroup
+			errChan := make(chan error, len(result.Messages))
+
+			wg.Add(len(result.Messages))
+
 			for _, msg := range result.Messages {
-				messageID := *msg.MessageId
-				if processedMessageIDs[messageID] {
-					// Skip processing if the message has already been processed
-					continue
-				}
+				go func(msg types.Message) {
 
-				logs.Info(fmt.Sprintf("Received message: %s: %s", *msg.MessageId, *msg.Body))
+					messageID := *msg.MessageId
+					if processedMessageIDs[messageID] {
+						// Skip processing if the message has already been processed
+						errChan <- nil
+						return
+					}
 
-				msgBody := strings.ReplaceAll(*msg.Body, `'`, `"`)
+					logs.Info(fmt.Sprintf("Received message: %s: %s", *msg.MessageId, *msg.Body))
 
-				var emailNoti models.EmailNoti
-				json.Unmarshal([]byte(msgBody), &emailNoti)
+					msgBody := strings.ReplaceAll(*msg.Body, `'`, `"`)
 
-				err = emailServer.SendEmailLuckyShirt(emailNoti)
+					var emailNoti models.EmailNoti
+					json.Unmarshal([]byte(msgBody), &emailNoti)
+
+					err = emailServer.SendEmailLuckyShirt(emailNoti)
+					if err != nil {
+						errChan <- fmt.Errorf(fmt.Sprintf("send email error: %s", err))
+					} else {
+						logs.Info(fmt.Sprintf("send email to %s successfully", emailNoti.Email))
+					}
+
+					processedMessageIDs[messageID] = true
+
+					_, err := queue.DeleteMessage(context.TODO(), &sqs.DeleteMessageInput{
+						QueueUrl:      &sqsURL,
+						ReceiptHandle: msg.ReceiptHandle,
+					})
+					if err != nil {
+						errChan <- fmt.Errorf(fmt.Sprintf("error deleting message: %s", err))
+					}
+
+					errChan <- nil
+				}(msg)
+
+			}
+
+			go func() {
+				wg.Wait()
+				close(errChan)
+			}()
+
+			for range result.Messages {
+				err := <-errChan
 				if err != nil {
-					logs.Error(fmt.Sprintf("send email error: %s", err))
-				} else {
-					logs.Info(fmt.Sprintf("send email to %s successfully", emailNoti.Email))
-				}
-
-				processedMessageIDs[messageID] = true
-
-				_, err := queue.DeleteMessage(context.TODO(), &sqs.DeleteMessageInput{
-					QueueUrl:      &sqsURL,
-					ReceiptHandle: msg.ReceiptHandle,
-				})
-				if err != nil {
-					logs.Error(fmt.Sprintf("error deleting message: %s", err))
+					logs.Error(err)
 				}
 
 			}
+
 		}
 
 	}
